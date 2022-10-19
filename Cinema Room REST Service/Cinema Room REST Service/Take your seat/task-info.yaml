@@ -1,0 +1,432 @@
+type: edu
+files:
+- name: src/cinema/Main.java
+  visible: true
+  text: |
+    package cinema;
+
+    import org.springframework.boot.SpringApplication;
+    import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+    @SpringBootApplication
+    public class Main {
+        public static void main(String[] args) {
+            SpringApplication.run(Main.class, args);
+        }
+    }
+  learner_created: false
+- name: build.gradle
+  visible: true
+  text: |-
+    buildscript {
+        repositories {
+            mavenCentral()
+        }
+        dependencies {
+            classpath "org.springframework.boot:spring-boot-gradle-plugin:$hs.spring.bootVersion"
+            classpath "io.spring.gradle:dependency-management-plugin:$hs.spring.dependencyManagementVersion"
+        }
+    }
+
+    apply plugin: 'java'
+    apply plugin: 'org.springframework.boot'
+    apply plugin: 'io.spring.dependency-management'
+
+    repositories {
+        mavenCentral()
+    }
+
+    sourceSets.main.resources.srcDirs = ["src/resources"]
+
+    dependencies {
+        implementation 'org.springframework.boot:spring-boot-starter'
+        implementation 'org.springframework.boot:spring-boot-starter-actuator'
+        implementation 'org.springframework.boot:spring-boot-starter-web'
+    }
+  learner_created: false
+- name: src/resources/application.properties
+  visible: true
+  text: |-
+    server.port=28852
+    management.endpoints.web.exposure.include=*
+    management.endpoint.shutdown.enabled=true
+  learner_created: false
+- name: test/CinemaTests.java
+  visible: false
+  text: |-
+    import cinema.Main;
+    import com.google.gson.Gson;
+    import org.hyperskill.hstest.dynamic.DynamicTest;
+    import org.hyperskill.hstest.dynamic.input.DynamicTesting;
+    import org.hyperskill.hstest.exception.outcomes.WrongAnswer;
+    import org.hyperskill.hstest.mocks.web.response.HttpResponse;
+    import org.hyperskill.hstest.stage.SpringTest;
+    import org.hyperskill.hstest.testcase.CheckResult;
+
+    import java.util.Map;
+
+    import static org.hyperskill.hstest.testing.expect.Expectation.expect;
+    import static org.hyperskill.hstest.testing.expect.json.JsonChecker.*;
+
+    public class CinemaTests extends SpringTest {
+
+        private static final String ALREADY_PURCHASED_ERROR_MESSAGE = "The ticket has been already purchased!";
+        private static final String OUT_OF_BOUNDS_ERROR_MESSAGE = "The number of a row or a column is out of bounds!";
+
+        private static final Gson gson = new Gson();
+
+        public CinemaTests() {
+            super(Main.class);
+        }
+
+        private static void checkStatusCode(HttpResponse resp, int status) {
+            if (resp.getStatusCode() != status) {
+                throw new WrongAnswer(
+                    resp.getRequest().getMethod() + " " +
+                        resp.getRequest().getLocalUri() +
+                        " should respond with status code " + status + ", " +
+                        "responded: " + resp.getStatusCode() + "\n\n" +
+                        "Response body:\n\n" + resp.getContent()
+                );
+            }
+        }
+
+        CheckResult testEndpoint() {
+            HttpResponse response = get("/seats").send();
+            checkStatusCode(response, 200);
+            return CheckResult.correct();
+        }
+
+        CheckResult testEndpointAvailableSeats() {
+            HttpResponse response = get("/seats").send();
+            expect(response.getContent()).asJson().check(
+                isObject()
+                    .value("available_seats",
+                        isArray(
+                            81,
+                            isObject()
+                                .value("row", isInteger(i -> i >= 1 && i <= 9))
+                                .value("column", isInteger(i -> i >= 1 && i <= 9))
+                                .value("price", isInteger(price -> price == 10 || price == 8))
+                        )
+                    )
+                    .value("total_columns", 9)
+                    .value("total_rows", 9)
+            );
+            return CheckResult.correct();
+        }
+
+        CheckResult testPurchaseTicket() {
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "1",
+                    "column", "1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 200);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("row", 1)
+                        .value("column", 1)
+                        .value("price", 10)
+                );
+            return CheckResult.correct();
+        }
+
+        CheckResult testErrorMessageThatTicketHasBeenPurchased() {
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "1",
+                    "column", "1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", ALREADY_PURCHASED_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+            return CheckResult.correct();
+        }
+
+        CheckResult testErrorMessageThatNumbersOutOfBounds() {
+            HttpResponse response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "10",
+                    "column", "1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", OUT_OF_BOUNDS_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+
+            response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "1",
+                    "column", "10"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", OUT_OF_BOUNDS_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+
+            response = post(
+                "/purchase",
+                gson.toJson(Map.of(
+                    "row", "-1",
+                    "column", "-1"
+                ))
+            ).send();
+
+            checkStatusCode(response, 400);
+
+            expect(response.getContent()).asJson()
+                .check(
+                    isObject()
+                        .value("error", OUT_OF_BOUNDS_ERROR_MESSAGE)
+                        .anyOtherValues()
+                );
+
+
+            return CheckResult.correct();
+        }
+
+        @DynamicTest
+        DynamicTesting[] dynamicTests = new DynamicTesting[]{
+            this::testEndpoint,
+            this::testEndpointAvailableSeats,
+            this::testPurchaseTicket,
+            this::testErrorMessageThatTicketHasBeenPurchased,
+            this::testErrorMessageThatNumbersOutOfBounds
+        };
+    }
+  learner_created: false
+- name: src/cinema/controller/mainController.java
+  visible: true
+  text: |-
+    package cinema.controller;
+
+    import cinema.dao.responseBody;
+    import cinema.dao.seat;
+    import org.springframework.web.bind.annotation.GetMapping;
+    import org.springframework.web.bind.annotation.RestController;
+
+    import java.util.List;
+
+    @RestController
+    public class mainController {
+        private final List<seat> seatList = List.of(
+                new seat(1,1),
+                new seat(1,2),
+                new seat(1,3),
+                new seat(1,4),
+                new seat(1,5),
+                new seat(1,6),
+                new seat(1,7),
+                new seat(1,8),
+                new seat(1,9),
+
+                new seat(2,1),
+                new seat(2,2),
+                new seat(2,3),
+                new seat(2,4),
+                new seat(2,5),
+                new seat(2,6),
+                new seat(2,7),
+                new seat(2,8),
+                new seat(2,9),
+
+                new seat(3,1),
+                new seat(3,2),
+                new seat(3,3),
+                new seat(3,4),
+                new seat(3,5),
+                new seat(3,6),
+                new seat(3,7),
+                new seat(3,8),
+                new seat(3,9),
+
+                new seat(4,1),
+                new seat(4,2),
+                new seat(4,3),
+                new seat(4,4),
+                new seat(4,5),
+                new seat(4,6),
+                new seat(4,7),
+                new seat(4,8),
+                new seat(4,9),
+
+                new seat(5,1),
+                new seat(5,2),
+                new seat(5,3),
+                new seat(5,4),
+                new seat(5,5),
+                new seat(5,6),
+                new seat(5,7),
+                new seat(5,8),
+                new seat(5,9),
+
+                new seat(6,1),
+                new seat(6,2),
+                new seat(6,3),
+                new seat(6,4),
+                new seat(6,5),
+                new seat(6,6),
+                new seat(6,7),
+                new seat(6,8),
+                new seat(6,9),
+
+                new seat(7,1),
+                new seat(7,2),
+                new seat(7,3),
+                new seat(7,4),
+                new seat(7,5),
+                new seat(7,6),
+                new seat(7,7),
+                new seat(7,8),
+                new seat(7,9),
+
+                new seat(8,1),
+                new seat(8,2),
+                new seat(8,3),
+                new seat(8,4),
+                new seat(8,5),
+                new seat(8,6),
+                new seat(8,7),
+                new seat(8,8),
+                new seat(8,9),
+
+                new seat(9,1),
+                new seat(9,2),
+                new seat(9,3),
+                new seat(9,4),
+                new seat(9,5),
+                new seat(9,6),
+                new seat(9,7),
+                new seat(9,8),
+                new seat(9,9)
+        );
+
+        @GetMapping("/seats")
+        public responseBody getSeats() {
+            responseBody responseBody = new responseBody(9,9,seatList);
+            return responseBody;
+        }
+    }
+  learner_created: true
+- name: src/cinema/entity/seat.java
+  visible: true
+  text: |
+    package cinema.dao;
+
+    public class seat {
+        private int row;
+        private int column;
+
+        public int getRow() {
+            return row;
+        }
+
+        public void setRow(int row) {
+            this.row = row;
+        }
+
+        public int getColumn() {
+            return column;
+        }
+
+        public void setColumn(int column) {
+            this.column = column;
+        }
+
+        public seat(){
+        }
+        public seat(int row, int column) {
+            this.row = row;
+            this.column = column;
+        }
+    }
+  learner_created: true
+- name: src/cinema/entity/responseBody.java
+  visible: true
+  text: |
+    package cinema.dao;
+
+    import java.util.List;
+
+    public class responseBody {
+        private int total_rows;
+        private int total_columns;
+        private List<seat> available_seats;
+
+        public int getTotal_rows() {
+            return total_rows;
+        }
+
+        public void setTotal_rows(int total_rows) {
+            this.total_rows = total_rows;
+        }
+
+        public int getTotal_columns() {
+            return total_columns;
+        }
+
+        public void setTotal_columns(int total_columns) {
+            this.total_columns = total_columns;
+        }
+
+        public List<seat> getAvailable_seats() {
+            return available_seats;
+        }
+
+        public void setAvailable_seats(List<seat> available_seats) {
+            this.available_seats = available_seats;
+        }
+
+        public responseBody() {
+        }
+
+        public responseBody(int total_rows, int total_columns, List<seat> available_seats) {
+            this.total_rows = total_rows;
+            this.total_columns = total_columns;
+            this.available_seats = available_seats;
+        }
+    }
+  learner_created: true
+- name: src/cinema/entity/seatInfo.java
+  visible: true
+  learner_created: true
+- name: src/cinema/entity/error.java
+  visible: true
+  learner_created: true
+- name: src/cinema/entity/cinema.java
+  visible: true
+  learner_created: true
+feedback_link: https://hyperskill.org/learn/step/13376#comment
+status: Solved
+feedback:
+  message: Congratulations!
+  time: Tue, 20 Sep 2022 03:51:55 UTC
+record: 2
